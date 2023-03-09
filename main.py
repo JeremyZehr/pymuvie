@@ -37,6 +37,7 @@ center_y = int(screen_height/2 - (HEIGHT+BOTTOM_BAR) / 2)
 
 # set the position of the window to the center of the screen
 root.geometry(f'{WIDTH}x{HEIGHT+BOTTOM_BAR}+{center_x}+{center_y}')
+root.minsize(WIDTH, HEIGHT+BOTTOM_BAR)
 
 canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, bg='black')
 canvas.pack(anchor=tk.NW, expand=True)
@@ -49,7 +50,12 @@ def update_image(lbd):
   if root_open:
     d = ImageDraw.Draw(image)
     lbd(d)
-    tatras[0] = ImageTk.PhotoImage(image)
+    image_resized = image
+    w,h = root.winfo_width(), root.winfo_height()
+    if w > WIDTH or h > HEIGHT+BOTTOM_BAR:
+      image_resized = image.resize((w,h-BOTTOM_BAR))
+      canvas.config(width=w, height=h-BOTTOM_BAR)
+    tatras[0] = ImageTk.PhotoImage(image_resized)
     canvas.itemconfig(img_id,image=tatras[0])
     root.update()
 
