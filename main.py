@@ -1,20 +1,23 @@
 #!/usr/bin/python3
 import time
+import math
 import random
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageDraw, ImageTk
 
-bckgnd = Image.open('background.png')
+mapImg = Image.open('background.png')
 
 TARGET_FPS = 30
-FERTILITY = 1800 # number of cycles needed to recover from giving birth
-NCELLS = 300 # Number of cells at the beginning
+FERTILITY = 900 # number of cycles needed to recover from giving birth
+LIFE = 1200 # number of remaining cycles that cells start with
+NCELLS = 500 # Number of cells at the beginning
 MUTATION = 100 # Prevalence of mutation per letter (1/MUTATION)
-WIDTH = bckgnd.width
-HEIGHT = bckgnd.height
+WIDTH = mapImg.width
+HEIGHT = mapImg.height
+print("Size: {},{}".format(WIDTH,HEIGHT))
 BOTTOM_BAR = 40 # in px
-PIXELS = list(bckgnd.getdata())
+PIXELS = list(mapImg.getdata())
 DNA = "NSEWRLFB0" # N=North; S=South; E=East; W=West; R=Right (90deg rotation); L=Left (-90deg rotation); F=Forward; B=Back; 0=Do not move
 
 root = tk.Tk()
@@ -40,32 +43,52 @@ root.geometry(f'{WIDTH}x{HEIGHT+BOTTOM_BAR}+{center_x}+{center_y}')
 root.minsize(WIDTH, HEIGHT+BOTTOM_BAR)
 
 canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, bg='black')
-canvas.pack(anchor=tk.NW, expand=True)
+canvas.pack(anchor=tk.N, expand=True)
 
-image = Image.new(mode = "RGB", size = (WIDTH, HEIGHT), color = (0, 0, 0))
-tatras = [ImageTk.PhotoImage(image)]
-img_id = canvas.create_image(0, 0, anchor=tk.NW, image=tatras[0])
+image_spots = Image.new(mode = "RGB", size = (WIDTH, HEIGHT), color = (0, 0, 0))
+draw_spots = ImageDraw.Draw(image_spots)
+image_render = Image.new(mode = "RGB", size = (WIDTH, HEIGHT), color = (0, 0, 0))
+draw_render = ImageDraw.Draw(image_render)
+tatras = ImageTk.PhotoImage(image_render)
+img_id = canvas.create_image(0, 0, anchor=tk.NW, image=tatras)
+# These two will be recreated at each cycle
+image_cells = None
+draw_cells = None
 
 def update_image(lbd):
   if root_open:
-    d = ImageDraw.Draw(image)
-    lbd(d)
-    image_resized = image
-    w,h = root.winfo_width(), root.winfo_height()
-    if w > WIDTH or h > HEIGHT+BOTTOM_BAR:
-      image_resized = image.resize((w,h-BOTTOM_BAR))
-      canvas.config(width=w, height=h-BOTTOM_BAR)
-    tatras[0] = ImageTk.PhotoImage(image_resized)
-    canvas.itemconfig(img_id,image=tatras[0])
+    global image_cells, draw_cells
+    image_cells = Image.new(mode = "RGBA", size = (WIDTH, HEIGHT), color = (0, 0, 0, 0))
+    draw_cells = ImageDraw.Draw(image_cells)
+    lbd()
+    image_render.paste(image_spots, (0,0))
+    image_render.paste(image_cells, (0,0), image_cells)
+    # allow canvas resizing but enforce ratio
+    w, h = root.winfo_width(), root.winfo_height()
+    ratio_w, ratio_h = w/WIDTH, h/(HEIGHT+BOTTOM_BAR)
+    ratio = min(ratio_w,ratio_h)
+    new_w, new_h = round(WIDTH*ratio), round(HEIGHT*ratio)
+    image_resized = image_render.resize((new_w,new_h))
+    canvas.config(width=new_w, height=new_h)
+    global tatras
+    tatras = ImageTk.PhotoImage(image_resized)
+    canvas.itemconfig(img_id,image=tatras)
     root.update()
 
 class Spot:
-  def refresh(self, d):
-    d.point([self.x,self.y], fill=(self.color[0],self.color[1],self.color[2]))
+  def refresh(self):
+    draw_spots.point([self.x,self.y], fill=(self.color[0],self.color[1],self.color[2]))
 
-  def visit(self, cell, d):
+  def visit(self, cell):
+    live_cells = [c for c in self.cells if c.life>=0]
     if cell not in self.cells:
-      for c in self.cells:
+      dead_cells = [c for c in self.cells if c.life<=0]
+      if (len(dead_cells)>0):
+        cell.life += 100
+        dead_cell = dead_cells[0]
+        cells.remove(dead_cell)
+        self.cells.remove(dead_cell)
+      for c in live_cells:
         if (c.female != cell.female) and c.fertile_in==0 and cell.fertile_in==0:
           dna = c.dna[0:len(c.dna)//2] + cell.dna[len(cell.dna)//2:len(cell.dna)]
           cells.append( Cell(self.x,self.y,dna=dna) )
@@ -77,7 +100,7 @@ class Spot:
     self.color[2] += 10
     if self.color[2] > 255:
       self.color[2] = 255
-    self.refresh(d)
+    self.refresh()
 
   def __init__(self, x, y, color):
     self.x = x
@@ -96,37 +119,43 @@ walls = [spot for spot in spots if spot.wall]
 nonWalls = [spot for spot in spots if not spot.wall]
 
 class Cell:
-  def refresh(self,d):
+  def refresh(self):
     color = (255,255,0)
     if self.female:
       color = (0,255,0)
-    d.point([self.x,self.y], fill=color)
+    if self.life<=0:
+      color = (255,0,0)
+    draw_cells.point([self.x,self.y], fill=color)
 
-  def place(self,x,y,d):
+  def highlight(self, color="purple"):
+    draw_cells.ellipse((self.x-5,self.y-5,self.x+5,self.y+5), fill=None, outline=color, width=2)
+    
+  def place(self,x,y):
+    if (self.life<=0):
+      return
     old_spot = spotAtXY(self.x,self.y)
     if self in old_spot.cells:
       old_spot.cells.remove(self)
-      old_spot.refresh(d)
-      for cell in old_spot.cells:
-        cell.refresh(d)
+      # old_spot.refresh(d)
+      # for cell in old_spot.cells:
+      #   cell.refresh(d)
     x = x%WIDTH
     y = y%HEIGHT
     spot = spotAtXY(x,y)
-    if spot.wall:
-      return # Cannot place cell here: it's a wall!
-    elif len(spot.cells) > 1:
-      return # Spot already occupied by 2 cells
-    else:
+    live_cells = [cell for cell in spot.cells if cell.life>=0]
+    if not spot.wall and len(live_cells) < 2:
       self.x = x
       self.y = y
-      spot.visit(self,d)
-      self.refresh(d)
+      spot.visit(self)
+    else:
+      old_spot.visit(self)  
+    self.refresh()
 
   def __init__(self, x, y, dna="NSEWRLFBFLRWESN0", female=None):
     self.x = x
     self.y = y
     self.step = 0
-    self.life = 10
+    self.life = LIFE
     self.dna = list(range(0,len(dna)))
     for i in range(0,len(dna)):
       if random.randint(1,MUTATION)==MUTATION:
@@ -146,16 +175,59 @@ cells = [Cell(startingPoint.x,startingPoint.y) for startingPoint in startingPoin
 for i in range(0,NCELLS):
   cells[i].dna = cells[i].dna[0:i%len(cells[i].dna)]+cells[i].dna[i%len(cells[i].dna):len(cells[i].dna)]
 
-def init(d):
+def init():
   for wall in walls:
-    wall.refresh(d)
+    wall.refresh()
   for cell in cells:
-    cell.refresh(d)
+    cell.place(cell.x,cell.y)
+    # cell.refresh(d)
 
-update_image(lambda d:init(d))
+update_image(lambda:init())
 
-def cycle(d):
+
+def closestCellXY(x,y,radius=10):
+  spot = spotAtXY(x,y)
+  live_cells = [c for c in spot.cells if c.life>0]
+  if (len(live_cells)>0):
+    return live_cells[0]
+  last_x, last_y = x, y
+  for d in range(1,radius):
+    for r in range(0,360,20):
+      xi, yi = x+round(d*math.cos(math.radians(r))), y+round(d*math.sin(math.radians(r)))
+      if (xi<0 or xi>=WIDTH or yi<0 or yi>=HEIGHT or (xi==last_x and yi==last_y)):
+        continue
+      last_x, last_y = xi, yi
+      spot = spotAtXY(xi,yi)
+      live_cells = [c for c in spot.cells if c.life>0]
+      if (len(live_cells)>0):
+        return live_cells[0]
+  return None
+
+mouse_x, mouse_y = -1, -1
+def clear_mouse(event=None):
+  global mouse_x, mouse_y
+  mouse_x, mouse_y = -1, -1
+def motion(event):
+  global mouse_x, mouse_y
+  mouse_x, mouse_y = round(event.x*WIDTH/canvas.winfo_width()), round(event.y*HEIGHT/canvas.winfo_height())
+canvas.bind('<Motion>', motion)
+canvas.bind('<Leave>', clear_mouse)
+def click(event):
+  cell = closestCellXY(mouse_x,mouse_y)
+  if (cell==None):
+    return
+  if (cell in highlighted_cells):
+    highlighted_cells.remove(cell)
+  else:
+    highlighted_cells.append(cell)
+canvas.bind('<Button-1>', click)
+
+highlighted_cells = []
+def cycle():
   for cell in cells:
+    if (cell.life<=0):
+      cell.refresh()
+      continue
     cell.step = (cell.step+1) % len(cell.dna)
     cell.fertile_in = max(0,cell.fertile_in-1)
     previous_direction = cell.direction
@@ -203,8 +275,9 @@ def cycle(d):
     elif cell.direction=="S":
       dy = 1
 
+    cell.life = max(0,cell.life-1)
     x, y = cell.x, cell.y
-    cell.place(cell.x+dx,cell.y+dy, d)
+    cell.place(cell.x+dx,cell.y+dy)
     # Update cell.direction with the *actual* movement (maybe there was a wall on the way)
     if cell.x < x:
       cell.direction = "W"
@@ -216,12 +289,28 @@ def cycle(d):
       cell.direction = "S"
     else:
       cell.direction = "0"
+
+  cell = None
+  if (mouse_x>=0 and mouse_x<WIDTH and mouse_y>=0 and mouse_y<HEIGHT):
+    cell = closestCellXY(mouse_x,mouse_y)
+  if cell == None:
+    cell_info.config(text='Not hovering cells currently')
+  else:
+    cell_info.config(text='Cell: {} hp, female? {}, fertile in {}, DNA is {}'.format(cell.life,cell.female,cell.fertile_in,cell.dna))
+    cell.highlight()
+
+  for cell in highlighted_cells:
+    cell.highlight("pink")
+
 # end cycle
 
 info = tk.Label(root, text='0 fps, ncells: 0')
-info.pack(anchor=tk.CENTER, expand=True)
+info.pack(anchor=tk.W, expand=True)
 
-fps = {'timestamp': 0, 'n': 0}
+cell_info = tk.Label(root, text='Not currently hovering any cell')
+cell_info.pack(anchor=tk.E, expand=True)
+
+fps = {'timestamp': 0, 'n': 0, 'l': 0}
 
 lastLoopTime = time.time()
 while True:
@@ -230,12 +319,15 @@ while True:
 
   currentTime = time.time()
   if currentTime-fps['timestamp'] >= 1:
-    info.config(text='{} fps, ncells: {}'.format(fps['n'],len(cells)))
+    info.config(text='{} fps, {} lps, ncells: {} (alive {})'.format(fps['n'],fps['l'],len(cells),len([c for c in cells if c.life>0])))
     fps['n'] = 0
+    fps['l'] = 0
     fps['timestamp'] = currentTime
 
+  fps['l'] += 1
   dt = currentTime - lastLoopTime
   if (dt >= 1/TARGET_FPS):
     fps['n'] += 1
     lastLoopTime = currentTime
-    update_image(lambda d:cycle(d))
+
+    update_image(lambda:cycle())
