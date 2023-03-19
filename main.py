@@ -3,28 +3,33 @@ import time
 import math
 import random
 import threading
+import cv2
+import numpy as np
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageDraw, ImageTk
 from copy import deepcopy
 
-mapImg = Image.open('background.png')
+# mapImg = Image.open('background.png')
+mapImg = cv2.imread('background.png')
 
 # Note: executing a frame or cycle loop might take more than the target interval duration,
 # resulting in skipped loop(s). There's no real way around it for the frame loops,
 # but multiple cycle loops should be run if delay is too great
 
 TARGET_FPS = 20 # number of times the display is refreshed per second
-TARGET_CPS = 40 # number of cell cycles per second
+TARGET_CPS = 60 # number of cell cycles per second
 FERTILITY = 900 # number of cycles needed to recover from giving birth
 LIFE = 1200 # number of remaining cycles that cells start with
-NCELLS = 250 # Number of cells at the beginning
+NCELLS = 500 # Number of cells at the beginning
 MUTATION = 100 # Prevalence of mutation per letter (1/MUTATION)
-WIDTH = mapImg.width
-HEIGHT = mapImg.height
+# WIDTH = mapImg.width
+# HEIGHT = mapImg.height
+WIDTH = mapImg.shape[1]
+HEIGHT = mapImg.shape[0]
 print("Size: {},{}".format(WIDTH,HEIGHT))
 BOTTOM_BAR = 40 # in px
-PIXELS = list(mapImg.getdata())
+# PIXELS = list(mapImg.getdata())
 DNA = "NSEWRLFB0" # N=North; S=South; E=East; W=West; R=Right (90deg rotation); L=Left (-90deg rotation); F=Forward; B=Back; 0=Do not move
 
 mouse_x, mouse_y = -1, -1
@@ -60,66 +65,80 @@ info.pack(anchor=tk.W, expand=True)
 cell_info = tk.Label(root, text='Not currently hovering any cell')
 cell_info.pack(anchor=tk.E, expand=True)
 
-
-image_spots = Image.new(mode = "RGB", size = (WIDTH, HEIGHT), color = (0, 0, 0))
-draw_spots = ImageDraw.Draw(image_spots)
-image_render = image_spots.copy()
-image_resized = image_render
-tatras = ImageTk.PhotoImage(image_resized)
-img_id = canvas.create_image(0, 0, anchor=tk.NW, image=tatras)
+image_spots = np.zeros((HEIGHT,WIDTH,3), np.uint8)
+image_PIL = Image.fromarray(image_spots)
+image_TK = ImageTk.PhotoImage(image_PIL)
+img_id = canvas.create_image(0, 0, anchor=tk.NW, image=image_TK)
+# image_spots = Image.new(mode = "RGB", size = (WIDTH, HEIGHT), color = (0, 0, 0))
+# draw_spots = ImageDraw.Draw(image_spots)
+# image_render = image_spots.copy()
+# image_resized = image_render
+# tatras = ImageTk.PhotoImage(image_resized)
+# img_id = canvas.create_image(0, 0, anchor=tk.NW, image=tatras)
 
 active_cell = None
 highlighted_cell = None
 
 updating_image = False
-def update_image(copy_cells,w,h):
+def update_image(w,h):
   if root_open:
     global updating_image
     updating_image = True
-    image_cells = Image.new(mode = "RGBA", size = (WIDTH, HEIGHT), color = (0, 0, 0, 0))
-    draw_cells = ImageDraw.Draw(image_cells)
+    # image_cells = Image.new(mode = "RGBA", size = (WIDTH, HEIGHT), color = (0, 0, 0, 0))
+    # draw_cells = ImageDraw.Draw(image_cells)
     global spots_to_refresh
     for spot in spots_to_refresh:
-      spot.refresh(draw_spots)
+      spot.refresh(image_spots)
+      # spot.refresh(draw_spots)
+    image_cells = np.copy(image_spots)
     spots_to_refresh = [s for s in spots_to_refresh if s.need_refresh>0]
-    for cell in copy_cells:
-      cell.refresh(draw_cells)
+    for cell in cells:
+      cell.refresh(image_cells)
+      # cell.refresh(draw_cells)
 
     hovered = None
     if (mouse_x>=0 and mouse_x<WIDTH and mouse_y>=0 and mouse_y<HEIGHT):
       hovered = closestCellXY(mouse_x,mouse_y)
     
     if hovered != None:
-      hovered.highlight(draw_cells)
+      hovered.highlight(image_cells)
+      # hovered.highlight(draw_cells)
     global highlighted_cell
     if highlighted_cell:
       if highlighted_cell.life>0:
-        highlighted_cell.highlight(draw_cells,"pink")
+        highlighted_cell.highlight(image_cells, "pink")
+        # highlighted_cell.highlight(draw_cells,"pink")
       else:
         highlighted_cell = None
 
     global active_cell
     active_cell = highlighted_cell or hovered
     
-    image_render = image_spots.copy()
-    image_render.paste(image_cells, (0,0), image_cells)
+    # image_render = image_spots.copy()
+    # image_render.paste(image_cells, (0,0), image_cells)
     # allow canvas resizing but enforce ratio
     # w, h = root.winfo_width(), root.winfo_height()
     ratio_w, ratio_h = w/WIDTH, h/(HEIGHT+BOTTOM_BAR)
     ratio = min(ratio_w,ratio_h)
     new_w, new_h = round(WIDTH*ratio), round(HEIGHT*ratio)
-    global image_resized
-    image_resized = image_render.resize((new_w,new_h))
-    # global tatras
-    # tatras = ImageTk.PhotoImage(image_resized)
-    # canvas.config(width=new_w, height=new_h)
-    # canvas.itemconfig(img_id,image=tatras)
-    # root.update()
+    if (new_w != WIDTH or new_h != WIDTH):
+      image_resized = cv2.resize(image_cells,(new_w,new_h), interpolation= cv2.INTER_NEAREST)
+    else:
+      image_resized = image_cells
+    global image_PIL
+    image_PIL = Image.fromarray(image_resized)
+    # image_resized = image_render.resize((new_w,new_h))
+    # # global tatras
+    # # tatras = ImageTk.PhotoImage(image_resized)
+    # # canvas.config(width=new_w, height=new_h)
+    # # canvas.itemconfig(img_id,image=tatras)
+    # # root.update()
     updating_image = False
 
 class Spot:
   def refresh(self,d):
-    d.point([self.x,self.y], fill=(self.color[0],self.color[1],self.color[2]))
+    # d.point([self.x,self.y], fill=(self.color[0],self.color[1],self.color[2]))
+    d[self.y,self.x] = self.color
     self.need_refresh -= 1
 
   def visit(self, cell):
@@ -158,7 +177,8 @@ class Spot:
     else:
       self.wall = True
 
-spots = [Spot(i%WIDTH,i//WIDTH,PIXELS[i]) for i in range(0,len(PIXELS))]
+# spots = [Spot(i%WIDTH,i//WIDTH,PIXELS[i]) for i in range(0,len(PIXELS))]
+spots = [Spot(x,y,mapImg[y,x]) for y in range(HEIGHT) for x in range(WIDTH)]
 def spotAtXY(x,y):
   return spots[x+y*WIDTH]
 walls = [spot for spot in spots if spot.wall]
@@ -166,15 +186,20 @@ nonWalls = [spot for spot in spots if not spot.wall]
 
 class Cell:
   def refresh(self,d):
-    color = (255,255,0)
+    color = [255,255,0]
     if self.female:
-      color = (0,255,0)
+      color = [0,255,0]
     if self.life<=0:
-      color = (255,0,0)
-    d.point([self.x,self.y], fill=color)
+      color = [255,0,0]
+    # d.point([self.x,self.y], fill=color)
+    d[self.y,self.x] = color
 
   def highlight(self, d, color="purple"):
-    d.ellipse((self.x-5,self.y-5,self.x+5,self.y+5), fill=None, outline=color, width=2)
+    # d.ellipse((self.x-5,self.y-5,self.x+5,self.y+5), fill=None, outline=color, width=2)
+    c = (150,0,150)
+    if color == "pink":
+      c = (255,0,200)
+    cv2.circle(d,(self.x,self.y), 5, c, 2)
     
   def place(self,x,y):
     if (self.life<=0):
@@ -198,8 +223,8 @@ class Cell:
     self.y = y
     self.step = 0
     self.life = LIFE
-    self.dna = list(range(0,len(dna)))
-    for i in range(0,len(dna)):
+    self.dna = list(range(len(dna)))
+    for i in range(len(dna)):
       if random.randint(1,MUTATION)==MUTATION:
         self.dna[i] = random.choice(DNA)
       else:
@@ -214,13 +239,13 @@ class Cell:
 
 startingPoints = random.sample(nonWalls,k=NCELLS)
 cells = [Cell(startingPoint.x,startingPoint.y) for startingPoint in startingPoints]
-for i in range(0,NCELLS):
+for i in range(NCELLS):
   cells[i].dna = cells[i].dna[0:i%len(cells[i].dna)]+cells[i].dna[i%len(cells[i].dna):len(cells[i].dna)]
 
 spots_to_refresh = [w for w in walls]
 for cell in cells:
   cell.place(cell.x,cell.y)
-update_image(cells,root.winfo_width(),root.winfo_height())
+update_image(root.winfo_width(),root.winfo_height())
 
 def closestCellXY(x,y,radius=10):
   spot = spotAtXY(x,y)
@@ -353,10 +378,12 @@ while True:
     # get size now before window gets closed
     root_w, root_h = root.winfo_width(),root.winfo_height()
 
-    tatras = ImageTk.PhotoImage(image_resized)
-    new_w, new_h = image_resized.size
+    # tatras = ImageTk.PhotoImage(image_resized)
+    new_w, new_h = image_PIL.size
     canvas.config(width=new_w, height=new_h)
-    canvas.itemconfig(img_id,image=tatras)
+    image_TK = ImageTk.PhotoImage(image_PIL)
+    # canvas.itemconfig(img_id,image=tatras)
+    canvas.itemconfig(img_id,image=image_TK)
     if active_cell:
       cell_info.config(text='Cell: {} hp, female? {}, fertile in {}, DNA is {}'.format(
         active_cell.life,active_cell.female,active_cell.fertile_in,active_cell.dna)
@@ -368,8 +395,9 @@ while True:
     fps['f'] += 1
     lastFrameTime = currentTime
     # use deep copies of cells because the attributes of the original ones might be updated while the thread gets executed
-    copy_cells = [deepcopy(c) for c in cells]
-    ui_thread = threading.Thread(target=update_image, args=(copy_cells,root_w,root_h))
+    # copy_cells = [deepcopy(c) for c in cells]
+    # ui_thread = threading.Thread(target=update_image, args=(copy_cells,root_w,root_h))
+    ui_thread = threading.Thread(target=update_image, args=(root_w,root_h))
     ui_thread.start()
     
   # Cell cycle (synchronous - main thread)
