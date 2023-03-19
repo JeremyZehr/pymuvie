@@ -10,27 +10,24 @@ from tkinter import ttk
 from PIL import Image, ImageDraw, ImageTk
 from copy import deepcopy
 
-# mapImg = Image.open('background.png')
 mapImg = cv2.imread('background.png')
 
-# Note: executing a frame or cycle loop might take more than the target interval duration,
-# resulting in skipped loop(s). There's no real way around it for the frame loops,
-# but multiple cycle loops should be run if delay is too great
-
-TARGET_FPS = 20 # number of times the display is refreshed per second
-TARGET_CPS = 60 # number of cell cycles per second
-FERTILITY = 900 # number of cycles needed to recover from giving birth
-LIFE = 1200 # number of remaining cycles that cells start with
-NCELLS = 500 # Number of cells at the beginning
+TARGET_FPS = 15 # number of times the display is refreshed per second
+TARGET_CPS = 200 # number of cell cycles per second
+FERTILITY = 180 # number of cycles needed to wait before being able to give birth
+LIFE = 20 # number of remaining cycles that cells start with (~childhood)
+NCELLS = 100 # Number of cells at the beginning
 MUTATION = 100 # Prevalence of mutation per letter (1/MUTATION)
-# WIDTH = mapImg.width
-# HEIGHT = mapImg.height
 WIDTH = mapImg.shape[1]
 HEIGHT = mapImg.shape[0]
 print("Size: {},{}".format(WIDTH,HEIGHT))
-BOTTOM_BAR = 40 # in px
-# PIXELS = list(mapImg.getdata())
-DNA = "NSEWRLFB0" # N=North; S=South; E=East; W=West; R=Right (90deg rotation); L=Left (-90deg rotation); F=Forward; B=Back; 0=Do not move
+BOTTOM_BAR = 80 # in px
+DNA = "NSEWRLFB0HPCV" 
+# N=North; S=South; E=East; W=West; R=Right (90deg rotation);
+# L=Left (-90deg rotation); F=Forward; B=Back; 
+# 0=Do not move; 
+# H=Hungry (look for abundant spot); P=Patient (avoid abundant spots); 
+# C=Crowd (look for crowded spot); V=Void (avoid crowded spots)
 
 mouse_x, mouse_y = -1, -1
 
@@ -65,16 +62,13 @@ info.pack(anchor=tk.W, expand=True)
 cell_info = tk.Label(root, text='Not currently hovering any cell')
 cell_info.pack(anchor=tk.E, expand=True)
 
+longest_info = tk.Label(root, text='Longest lineage: 0, DNA = ')
+longest_info.pack(anchor=tk.E, expand=True)
+
 image_spots = np.zeros((HEIGHT,WIDTH,3), np.uint8)
 image_PIL = Image.fromarray(image_spots)
 image_TK = ImageTk.PhotoImage(image_PIL)
 img_id = canvas.create_image(0, 0, anchor=tk.NW, image=image_TK)
-# image_spots = Image.new(mode = "RGB", size = (WIDTH, HEIGHT), color = (0, 0, 0))
-# draw_spots = ImageDraw.Draw(image_spots)
-# image_render = image_spots.copy()
-# image_resized = image_render
-# tatras = ImageTk.PhotoImage(image_resized)
-# img_id = canvas.create_image(0, 0, anchor=tk.NW, image=tatras)
 
 active_cell = None
 highlighted_cell = None
@@ -84,40 +78,30 @@ def update_image(w,h):
   if root_open:
     global updating_image
     updating_image = True
-    # image_cells = Image.new(mode = "RGBA", size = (WIDTH, HEIGHT), color = (0, 0, 0, 0))
-    # draw_cells = ImageDraw.Draw(image_cells)
     global spots_to_refresh
     for spot in spots_to_refresh:
       spot.refresh(image_spots)
-      # spot.refresh(draw_spots)
     image_cells = np.copy(image_spots)
     spots_to_refresh = [s for s in spots_to_refresh if s.need_refresh>0]
     for cell in cells:
       cell.refresh(image_cells)
-      # cell.refresh(draw_cells)
-
+    
     hovered = None
     if (mouse_x>=0 and mouse_x<WIDTH and mouse_y>=0 and mouse_y<HEIGHT):
       hovered = closestCellXY(mouse_x,mouse_y)
     
     if hovered != None:
       hovered.highlight(image_cells)
-      # hovered.highlight(draw_cells)
     global highlighted_cell
     if highlighted_cell:
       if highlighted_cell.life>0:
         highlighted_cell.highlight(image_cells, "pink")
-        # highlighted_cell.highlight(draw_cells,"pink")
       else:
         highlighted_cell = None
 
     global active_cell
     active_cell = highlighted_cell or hovered
     
-    # image_render = image_spots.copy()
-    # image_render.paste(image_cells, (0,0), image_cells)
-    # allow canvas resizing but enforce ratio
-    # w, h = root.winfo_width(), root.winfo_height()
     ratio_w, ratio_h = w/WIDTH, h/(HEIGHT+BOTTOM_BAR)
     ratio = min(ratio_w,ratio_h)
     new_w, new_h = round(WIDTH*ratio), round(HEIGHT*ratio)
@@ -127,62 +111,68 @@ def update_image(w,h):
       image_resized = image_cells
     global image_PIL
     image_PIL = Image.fromarray(image_resized)
-    # image_resized = image_render.resize((new_w,new_h))
-    # # global tatras
-    # # tatras = ImageTk.PhotoImage(image_resized)
-    # # canvas.config(width=new_w, height=new_h)
-    # # canvas.itemconfig(img_id,image=tatras)
-    # # root.update()
     updating_image = False
 
 class Spot:
   def refresh(self,d):
-    # d.point([self.x,self.y], fill=(self.color[0],self.color[1],self.color[2]))
-    d[self.y,self.x] = self.color
+    color = [0,0,0]
+    if self.wall:
+      color = [255,255,255]
+    else:
+      color[2] = 255 - self.food
+    d[self.y,self.x] = color
     self.need_refresh -= 1
 
-  def visit(self, cell):
+  def visit(self, cell, hunger=1):
     live_cells = [c for c in self.cells if c.life>=0]
     if cell not in self.cells:
       dead_cells = [c for c in self.cells if c.life<=0]
-      if (len(dead_cells)>0):
-        cell.life += 100
+      if (len(dead_cells)>0): # Eat a dead cell(!)
+        cell.life += 1
         dead_cell = dead_cells[0]
         cells.remove(dead_cell)
         self.cells.remove(dead_cell)
-      for c in live_cells:
-        if (c.female != cell.female) and c.fertile_in==0 and cell.fertile_in==0:
-          dna = c.dna[0:len(c.dna)//2] + cell.dna[len(cell.dna)//2:len(cell.dna)]
-          cells.append( Cell(self.x,self.y,dna=dna) )
-          if c.female:
-            c.fertile_in = FERTILITY
-          if cell.female:
-            cell.fertile_in = FERTILITY
+      if cell.life>1:
+        for c in live_cells:
+          if c.life>1 and (c.female != cell.female) and c.fertile_in==0 and cell.fertile_in==0:
+            dna = c.dna[0:len(c.dna)//2] + cell.dna[len(cell.dna)//2:len(cell.dna)]
+            c.life = c.life // 2 
+            cell.life = cell.life // 2
+            cells.append( Cell(self.x,self.y,dna=dna,generation=max(cell.gen,c.gen)+1,life=c.life+cell.life) )
+            if c.female:
+              c.fertile_in = FERTILITY
+            if cell.female:
+              cell.fertile_in = FERTILITY
       self.cells.append(cell)
-    self.color[2] += 10
-    if self.color[2] > 255:
-      self.color[2] = 255
+    
+    if self.food > 0:
+      # Eat hunger amount of food (if available)
+      new_food = max(0,self.food-hunger)
+      cell.life += (self.food-new_food)
+      self.food = new_food
+
     if self.need_refresh == 0:
       spots_to_refresh.append(self)
     self.need_refresh += 1
 
-  def __init__(self, x, y, color):
+  def __init__(self, x, y, wall=False):
     self.x = x
     self.y = y
-    self.color = [color[0],color[1],color[2]]
     self.cells = []
     self.need_refresh = 0
-    if self.color == [0,0,0]:
-      self.wall = False
+    self.wall = wall
+    if wall:
+      self.food = 0
     else:
-      self.wall = True
+      self.food = 255
 
-# spots = [Spot(i%WIDTH,i//WIDTH,PIXELS[i]) for i in range(0,len(PIXELS))]
-spots = [Spot(x,y,mapImg[y,x]) for y in range(HEIGHT) for x in range(WIDTH)]
+spots = [Spot(x,y,np.all(mapImg[y,x]==255)) for y in range(HEIGHT) for x in range(WIDTH)]
 def spotAtXY(x,y):
   return spots[x+y*WIDTH]
 walls = [spot for spot in spots if spot.wall]
 nonWalls = [spot for spot in spots if not spot.wall]
+
+longest_lineage = None
 
 class Cell:
   def refresh(self,d):
@@ -191,11 +181,9 @@ class Cell:
       color = [0,255,0]
     if self.life<=0:
       color = [255,0,0]
-    # d.point([self.x,self.y], fill=color)
     d[self.y,self.x] = color
 
   def highlight(self, d, color="purple"):
-    # d.ellipse((self.x-5,self.y-5,self.x+5,self.y+5), fill=None, outline=color, width=2)
     c = (150,0,150)
     if color == "pink":
       c = (255,0,200)
@@ -211,19 +199,24 @@ class Cell:
     y = y%HEIGHT
     spot = spotAtXY(x,y)
     live_cells = [cell for cell in spot.cells if cell.life>=0]
+    hunger = 1 # Eat 1 amount of food by default
+    if self.life < LIFE // 2:
+      hunger = 2 # If low on life, try to eat twice as much
     if not spot.wall and len(live_cells) < 2:
       self.x = x
       self.y = y
-      spot.visit(self)
+      spot.visit(self,hunger)
     else:
-      old_spot.visit(self)
+      old_spot.visit(self,hunger)
 
-  def __init__(self, x, y, dna="NSEWRLFBFLRWESN0", female=None):
+  # def __init__(self, x, y, dna="NSEWRLFBHPCVCPHBFLRWESN0", female=None):
+  def __init__(self, x, y, dna="NSEW", female=None, generation=0, life=LIFE):
     self.x = x
     self.y = y
     self.step = 0
     self.life = LIFE
     self.dna = list(range(len(dna)))
+    self.gen = generation
     for i in range(len(dna)):
       if random.randint(1,MUTATION)==MUTATION:
         self.dna[i] = random.choice(DNA)
@@ -236,11 +229,15 @@ class Cell:
       self.female = bool(random.getrandbits(1))
     else:
       self.female = female
+    global longest_lineage
+    if (longest_lineage == None or generation > longest_lineage.gen):
+      longest_lineage = self
 
 startingPoints = random.sample(nonWalls,k=NCELLS)
 cells = [Cell(startingPoint.x,startingPoint.y) for startingPoint in startingPoints]
 for i in range(NCELLS):
-  cells[i].dna = cells[i].dna[0:i%len(cells[i].dna)]+cells[i].dna[i%len(cells[i].dna):len(cells[i].dna)]
+  cells[i].dna = ''.join(random.choice(DNA) for n in cells[i].dna) # completely random DNA!
+#   # cells[i].dna = cells[i].dna[0:i%len(cells[i].dna)]+cells[i].dna[i%len(cells[i].dna):len(cells[i].dna)]
 
 spots_to_refresh = [w for w in walls]
 for cell in cells:
@@ -293,8 +290,7 @@ def cycle():
     cell.fertile_in = max(0,cell.fertile_in-1)
     previous_direction = cell.direction
     cell.direction = cell.dna[cell.step]
-    dx = 0
-    dy = 0
+    dx, dy = 0, 0
     if cell.direction in "RLFB" and previous_direction=="0":
       cell.direction="0"
     elif cell.direction=="R": # Right, 90deg angle
@@ -335,6 +331,33 @@ def cycle():
       dy = -1
     elif cell.direction=="S":
       dy = 1
+    else:
+      edges = [
+        spotAtXY(cell.x,cell.y),
+        spotAtXY((cell.x+1) % WIDTH,cell.y),
+        spotAtXY((cell.x-1) % WIDTH,cell.y),
+        spotAtXY(cell.x,(cell.y+1) % HEIGHT),
+        spotAtXY(cell.x,(cell.y-1) % HEIGHT)
+      ]
+      random.shuffle(edges)
+      maxFood, minFood, maxCells, minCells = None, None, None, None
+      for spot in edges:
+        if maxCells==None or (spot.wall==False and len(spot.cells) > len(maxCells.cells)):
+          maxCells = spot
+        if minCells==None or (spot.wall==False and len(spot.cells) < len(maxCells.cells)):
+          minCells = spot
+        if maxFood==None or (spot.wall==False and spot.food > maxFood.food):
+          maxFood = spot
+        if minFood==None or (spot.wall==False and spot.food < maxFood.food):
+          minFood = spot
+      if cell.direction == "H": # Hungry
+        dx, dy = maxFood.x-cell.x, maxFood.y-cell.y
+      elif cell.direction == "P": # Patient
+        dx, dy = minFood.x-cell.x, minFood.y-cell.y
+      elif cell.direction == "C": # Crowded
+        dx, dy = maxCells.x-cell.x, maxCells.y-cell.y
+      elif cell.direction == "V": # Void
+        dx, dy = minCells.x-cell.x, minCells.y-cell.y
 
     cell.life = max(0,cell.life-1)
     x, y = cell.x, cell.y
@@ -378,25 +401,22 @@ while True:
     # get size now before window gets closed
     root_w, root_h = root.winfo_width(),root.winfo_height()
 
-    # tatras = ImageTk.PhotoImage(image_resized)
     new_w, new_h = image_PIL.size
     canvas.config(width=new_w, height=new_h)
     image_TK = ImageTk.PhotoImage(image_PIL)
-    # canvas.itemconfig(img_id,image=tatras)
     canvas.itemconfig(img_id,image=image_TK)
     if active_cell:
-      cell_info.config(text='Cell: {} hp, female? {}, fertile in {}, DNA is {}'.format(
-        active_cell.life,active_cell.female,active_cell.fertile_in,active_cell.dna)
+      cell_info.config(text='Cell: {} hp, {}, fertile in {}, DNA is {}, Gen: {}'.format(
+        active_cell.life,("Female"if active_cell.female else"Male"),active_cell.fertile_in,active_cell.dna,active_cell.gen)
       )
     else:
       cell_info.config(text='No cell to display')
+    if longest_lineage != None:
+      longest_info.config(text='Longest lineage: gen = {}, DNA = {}'.format(longest_lineage.gen,longest_lineage.dna))
     root.update()
 
     fps['f'] += 1
     lastFrameTime = currentTime
-    # use deep copies of cells because the attributes of the original ones might be updated while the thread gets executed
-    # copy_cells = [deepcopy(c) for c in cells]
-    # ui_thread = threading.Thread(target=update_image, args=(copy_cells,root_w,root_h))
     ui_thread = threading.Thread(target=update_image, args=(root_w,root_h))
     ui_thread.start()
     
