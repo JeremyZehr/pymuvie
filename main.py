@@ -1,14 +1,22 @@
 #!/usr/bin/python3
+# import os
+# os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0" # disable high dpi scaling
+
 import time
 import math
 import random
 import threading
 import cv2
 import numpy as np
-import tkinter as tk
-from tkinter import ttk
-from PIL import Image, ImageDraw, ImageTk
+from PyQt6 import QtWidgets, QtCore
+import pyqtgraph as pg
+from PIL import Image
 from copy import deepcopy
+
+pg.setConfigOption('imageAxisOrder', 'row-major')
+app = QtWidgets.QApplication([])
+win = QtWidgets.QWidget()
+win.setWindowTitle('Pymuvie')
 
 mapImg = cv2.imread('background.png')
 
@@ -16,102 +24,135 @@ TARGET_FPS = 15 # number of times the display is refreshed per second
 TARGET_CPS = 200 # number of cell cycles per second
 FERTILITY = 180 # number of cycles needed to wait before being able to give birth
 LIFE = 20 # number of remaining cycles that cells start with (~childhood)
-NCELLS = 100 # Number of cells at the beginning
+NCELLS = 200 # Number of cells at the beginning
 MUTATION = 100 # Prevalence of mutation per letter (1/MUTATION)
 WIDTH = mapImg.shape[1]
 HEIGHT = mapImg.shape[0]
 print("Size: {},{}".format(WIDTH,HEIGHT))
 BOTTOM_BAR = 80 # in px
-DNA = "NSEWRLFB0HPCV" 
+DNA = "NSEWRLFB0HPCV"
 # N=North; S=South; E=East; W=West; R=Right (90deg rotation);
 # L=Left (-90deg rotation); F=Forward; B=Back; 
 # 0=Do not move; 
 # H=Hungry (look for abundant spot); P=Patient (avoid abundant spots); 
 # C=Crowd (look for crowded spot); V=Void (avoid crowded spots)
 
+plot = pg.RawImageWidget()
+plot.setImage(mapImg)
+
 mouse_x, mouse_y = -1, -1
+def move(moveEvent):
+  global mouse_x, mouse_y
+  mouse_x, mouse_y = -1, -1
+  plot_x, plot_y = plot.pos().x(), plot.pos().y()
+  plot_width, plot_height = plot.width(), plot.height()
+  x, y = moveEvent.pos().x(), moveEvent.pos().y()
+  if (x < plot_x or x >= plot_x+plot_width or y < plot_y or y >= plot_y+plot_height):
+    return
+  x, y = round(x * WIDTH / plot_width), round(y * HEIGHT / plot_height)
+  mouse_x, mouse_y = x, y
+plot.setMouseTracking(True) # Track mouse movements even when not clicking
+plot.mouseMoveEvent = move
 
-root = tk.Tk()
-root.title('Pymuvie')
+layout = QtWidgets.QVBoxLayout()
+layout.setSpacing(0)
+layout.setContentsMargins(0, 0, 0, 0)
+layout.addWidget(plot)
+statsLabel = QtWidgets.QLabel()
+layout.addWidget(statsLabel)
+cellLabel = QtWidgets.QLabel()
+layout.addWidget(cellLabel)
+lineageLabel = QtWidgets.QLabel()
+layout.addWidget(lineageLabel)
 
-root_open = True
-def on_closing():
-  global root_open
-  root_open = False
-  root.destroy()
-root.protocol("WM_DELETE_WINDOW", on_closing)
-
-# get the screen dimension
-screen_width = root.winfo_screenwidth()
-screen_height = root.winfo_screenheight()
-
-# find the center point
-center_x = int(screen_width/2 - WIDTH / 2)
-center_y = int(screen_height/2 - (HEIGHT+BOTTOM_BAR) / 2)
-
-# set the position of the window to the center of the screen
-root.geometry(f'{WIDTH}x{HEIGHT+BOTTOM_BAR}+{center_x}+{center_y}')
-root.minsize(WIDTH, HEIGHT+BOTTOM_BAR)
-
-canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, bg='black')
-canvas.pack(anchor=tk.N, expand=True)
-
-info = tk.Label(root, text='0 fps, ncells: 0')
-info.pack(anchor=tk.W, expand=True)
-
-cell_info = tk.Label(root, text='Not currently hovering any cell')
-cell_info.pack(anchor=tk.E, expand=True)
-
-longest_info = tk.Label(root, text='Longest lineage: 0, DNA = ')
-longest_info.pack(anchor=tk.E, expand=True)
+win.setLayout(layout)
+win.resize(WIDTH,HEIGHT+BOTTOM_BAR)
+win.show()
 
 image_spots = np.zeros((HEIGHT,WIDTH,3), np.uint8)
-image_PIL = Image.fromarray(image_spots)
-image_TK = ImageTk.PhotoImage(image_PIL)
-img_id = canvas.create_image(0, 0, anchor=tk.NW, image=image_TK)
 
 active_cell = None
 highlighted_cell = None
 
-updating_image = False
-def update_image(w,h):
-  if root_open:
-    global updating_image
-    updating_image = True
-    global spots_to_refresh
-    for spot in spots_to_refresh:
-      spot.refresh(image_spots)
-    image_cells = np.copy(image_spots)
-    spots_to_refresh = [s for s in spots_to_refresh if s.need_refresh>0]
-    for cell in cells:
-      cell.refresh(image_cells)
-    
-    hovered = None
-    if (mouse_x>=0 and mouse_x<WIDTH and mouse_y>=0 and mouse_y<HEIGHT):
-      hovered = closestCellXY(mouse_x,mouse_y)
-    
-    if hovered != None:
-      hovered.highlight(image_cells)
-    global highlighted_cell
-    if highlighted_cell:
-      if highlighted_cell.life>0:
-        highlighted_cell.highlight(image_cells, "pink")
-      else:
-        highlighted_cell = None
+def click(clickEvent):
+  cell = closestCellXY(mouse_x,mouse_y)
+  global highlighted_cell
+  if (cell==None):
+    highlighted_cell = None
+    return
+  if (cell==highlighted_cell):
+    highlighted_cell = None
+  else:
+    highlighted_cell = cell
+plot.mousePressEvent = click
 
-    global active_cell
-    active_cell = highlighted_cell or hovered
-    
-    ratio_w, ratio_h = w/WIDTH, h/(HEIGHT+BOTTOM_BAR)
-    ratio = min(ratio_w,ratio_h)
-    new_w, new_h = round(WIDTH*ratio), round(HEIGHT*ratio)
-    if (new_w != WIDTH or new_h != WIDTH):
-      image_resized = cv2.resize(image_cells,(new_w,new_h), interpolation= cv2.INTER_NEAREST)
+spots_to_refresh = []
+performance = {
+  'fps': {'lastSecond': 0, 'n': 0, 'value': 0, 'lastTimestamp': 0},
+  'cps': {'lastSecond': 0, 'n': 0, 'value': 0, 'lastTimestamp': 0},
+}
+updating_image = False
+def update_image():
+  timestamp = time.time()
+  if (timestamp-performance['fps']['lastTimestamp'] < 1/TARGET_FPS):
+    return
+  performance['fps']['lastTimestamp'] = timestamp
+  performance['fps']['n'] += 1
+  if (timestamp-performance['fps']['lastSecond'] >= 1):
+    performance['fps']['value'] = performance['fps']['n']
+    performance['fps']['n'] = 0
+    performance['fps']['lastSecond'] = timestamp
+  # update info
+  statsLabel.setText('FPS: {}; CPS: {}; ncells: {}'.format(performance['fps']['value'],performance['cps']['value'],len(cells)))
+  
+  global updating_image
+  updating_image = True
+  global spots_to_refresh
+  for spot in spots_to_refresh:
+    spot.refresh(image_spots)
+  image_cells = np.copy(image_spots)
+  spots_to_refresh = [s for s in spots_to_refresh if s.need_refresh>0]
+  for cell in cells:
+    cell.refresh(image_cells)
+  
+  hovered = None
+  if (mouse_x>=0 and mouse_x<WIDTH and mouse_y>=0 and mouse_y<HEIGHT):
+    hovered = closestCellXY(mouse_x,mouse_y)
+  
+  if hovered != None:
+    hovered.highlight(image_cells)
+  global highlighted_cell
+  if highlighted_cell:
+    if highlighted_cell.life>0:
+      highlighted_cell.highlight(image_cells, "pink")
     else:
-      image_resized = image_cells
-    global image_PIL
-    image_PIL = Image.fromarray(image_resized)
-    updating_image = False
+      highlighted_cell = None
+
+  active_cell = highlighted_cell or hovered
+  if active_cell:
+    cellLabel.setText("{}, Life: {}, Gen: {}, DNA: {}".format(
+      "Female" if active_cell.female else "Male",active_cell.life,active_cell.gen,active_cell.dna
+    ))
+  else:
+    cellLabel.setText("")
+
+  if longest_lineage:
+    lineageLabel.setText("Longest lineage: {}, {}".format(longest_lineage.gen,longest_lineage.dna))
+
+
+  fg = win.frameGeometry()
+  w, h = fg.width(), fg.height()
+  ratio_w, ratio_h = w/WIDTH, h/(HEIGHT+BOTTOM_BAR)
+  ratio = min(ratio_w,ratio_h)
+  new_w, new_h = round(WIDTH*ratio), round(HEIGHT*ratio)
+  if (new_w != WIDTH or new_h != WIDTH):
+    image_resized = cv2.resize(image_cells,(new_w,new_h), interpolation= cv2.INTER_NEAREST)
+  else:
+    image_resized = image_cells
+  plot.setImage(image_resized)
+  plot.setFixedSize(new_w,new_h)
+
+  updating_image = False
 
 class Spot:
   def refresh(self,d):
@@ -119,21 +160,20 @@ class Spot:
     if self.wall:
       color = [255,255,255]
     else:
-      color[2] = 255 - self.food
+      if len(self.dead_cells)>0:
+        color[0] = 255
+      else:
+        color[2] = 255 - self.food
     d[self.y,self.x] = color
     self.need_refresh -= 1
 
   def visit(self, cell, hunger=1):
-    live_cells = [c for c in self.cells if c.life>=0]
     if cell not in self.cells:
-      dead_cells = [c for c in self.cells if c.life<=0]
-      if (len(dead_cells)>0): # Eat a dead cell(!)
+      if (len(self.dead_cells)>0): # Eat a dead cell(!)
         cell.life += 1
-        dead_cell = dead_cells[0]
-        cells.remove(dead_cell)
-        self.cells.remove(dead_cell)
+        self.dead_cells.pop()
       if cell.life>1:
-        for c in live_cells:
+        for c in self.cells:
           if c.life>1 and (c.female != cell.female) and c.fertile_in==0 and cell.fertile_in==0:
             dna = c.dna[0:len(c.dna)//2] + cell.dna[len(cell.dna)//2:len(cell.dna)]
             c.life = c.life // 2 
@@ -143,8 +183,9 @@ class Spot:
               c.fertile_in = FERTILITY
             if cell.female:
               cell.fertile_in = FERTILITY
-      self.cells.append(cell)
-    
+      if cell.life>0:
+        self.cells.append(cell)
+
     if self.food > 0:
       # Eat hunger amount of food (if available)
       new_food = max(0,self.food-hunger)
@@ -159,6 +200,7 @@ class Spot:
     self.x = x
     self.y = y
     self.cells = []
+    self.dead_cells = []
     self.need_refresh = 0
     self.wall = wall
     if wall:
@@ -190,24 +232,31 @@ class Cell:
     cv2.circle(d,(self.x,self.y), 5, c, 2)
     
   def place(self,x,y):
-    if (self.life<=0):
-      return
     old_spot = spotAtXY(self.x,self.y)
+    if (self.life<=0):
+      if (self in cells):
+        cells.remove(self)
+      if (self in old_spot.cells):
+        old_spot.cells.remove(self)
+        if (self not in old_spot.dead_cells):
+          old_spot.dead_cells.append(self)
+          # if old_spot not in spots_to_refresh:
+          #   spots_to_refresh.append(old_spot)
+      return
     if self in old_spot.cells:
       old_spot.cells.remove(self)
     x = x%WIDTH
     y = y%HEIGHT
     spot = spotAtXY(x,y)
-    live_cells = [cell for cell in spot.cells if cell.life>=0]
     hunger = 1 # Eat 1 amount of food by default
     if self.life < LIFE // 2:
       hunger = 2 # If low on life, try to eat twice as much
-    if not spot.wall and len(live_cells) < 2:
+    if not spot.wall and len(spot.cells) < 2:
       self.x = x
       self.y = y
       spot.visit(self,hunger)
     else:
-      old_spot.visit(self,hunger)
+      old_spot.visit(self,hunger)  
 
   # def __init__(self, x, y, dna="NSEWRLFBHPCVCPHBFLRWESN0", female=None):
   def __init__(self, x, y, dna="NSEW", female=None, generation=0, life=LIFE):
@@ -242,13 +291,12 @@ for i in range(NCELLS):
 spots_to_refresh = [w for w in walls]
 for cell in cells:
   cell.place(cell.x,cell.y)
-update_image(root.winfo_width(),root.winfo_height())
+# update_image(root.winfo_width(),root.winfo_height())
 
 def closestCellXY(x,y,radius=10):
   spot = spotAtXY(x,y)
-  live_cells = [c for c in spot.cells if c.life>0]
-  if (len(live_cells)>0):
-    return live_cells[0]
+  if (len(spot.cells)>0):
+    return spot.cells[0]
   last_x, last_y = x, y
   for d in range(1,radius):
     for r in range(0,360,20):
@@ -257,32 +305,21 @@ def closestCellXY(x,y,radius=10):
         continue
       last_x, last_y = xi, yi
       spot = spotAtXY(xi,yi)
-      live_cells = [c for c in spot.cells if c.life>0]
-      if (len(live_cells)>0):
-        return live_cells[0]
+      if (len(spot.cells)>0):
+        return spot.cells[0]
   return None
 
-def clear_mouse(event=None):
-  global mouse_x, mouse_y
-  mouse_x, mouse_y = -1, -1
-def motion(event):
-  global mouse_x, mouse_y
-  mouse_x, mouse_y = round(event.x*WIDTH/canvas.winfo_width()), round(event.y*HEIGHT/canvas.winfo_height())
-canvas.bind('<Motion>', motion)
-canvas.bind('<Leave>', clear_mouse)
-def click(event):
-  cell = closestCellXY(mouse_x,mouse_y)
-  global highlighted_cell
-  if (cell==None):
-    highlighted_cell = None
-    return
-  if (cell==highlighted_cell):
-    highlighted_cell = None
-  else:
-    highlighted_cell = cell
-canvas.bind('<Button-1>', click)
 
 def cycle():
+  timestamp = time.time()
+  if (timestamp-performance['cps']['lastTimestamp'] < 1/TARGET_CPS):
+    return
+  performance['cps']['lastTimestamp'] = timestamp
+  performance['cps']['n'] += 1
+  if (timestamp-performance['cps']['lastSecond'] >= 1):
+    performance['cps']['value'] = performance['cps']['n']
+    performance['cps']['n'] = 0
+    performance['cps']['lastSecond'] = timestamp
   for cell in cells:
     if (cell.life<=0):
       continue
@@ -375,54 +412,18 @@ def cycle():
       cell.direction = "0"
 # end cycle
 
-fps = {'timestamp': 0, 'n': 0, 'c': 0, 'f': 0}
+# fps = {'timestamp': 0, 'n': 0, 'c': 0, 'f': 0}
 
-lastCycleTime = time.time()
-lastFrameTime = lastCycleTime
-while True:
-  if not root_open:
-    break
+# Print all the walls first
+for spot in walls:
+  spot.refresh(image_spots)
 
-  fps['n'] += 1
-  currentTime = time.time()
-  
-  if currentTime-fps['timestamp'] >= 1:
-    info.config(text='{} fps, {} cps, {} lps, ncells: {} (alive {})'.format(fps['f'],fps['c'],fps['n'],len(cells),len([c for c in cells if c.life>0])))
-    fps['n'] = 0
-    fps['f'] = 0
-    fps['c'] = 0
-    fps['timestamp'] = currentTime
-  
-  cps_time_difference = currentTime-lastCycleTime
-  fps_time_difference = currentTime-lastFrameTime
-  
-  # Frame cycle (asynchronous - threaded)
-  if ((fps_time_difference) >= 1/TARGET_FPS and updating_image == False and root_open):
-    # get size now before window gets closed
-    root_w, root_h = root.winfo_width(),root.winfo_height()
+# Launch the loops
+timer_cycle = QtCore.QTimer()
+timer_cycle.timeout.connect(cycle)
+timer_cycle.start(0)
+timer_ui = QtCore.QTimer()
+timer_ui.timeout.connect(update_image)
+timer_ui.start(0)
 
-    new_w, new_h = image_PIL.size
-    canvas.config(width=new_w, height=new_h)
-    image_TK = ImageTk.PhotoImage(image_PIL)
-    canvas.itemconfig(img_id,image=image_TK)
-    if active_cell:
-      cell_info.config(text='Cell: {} hp, {}, fertile in {}, DNA is {}, Gen: {}'.format(
-        active_cell.life,("Female"if active_cell.female else"Male"),active_cell.fertile_in,active_cell.dna,active_cell.gen)
-      )
-    else:
-      cell_info.config(text='No cell to display')
-    if longest_lineage != None:
-      longest_info.config(text='Longest lineage: gen = {}, DNA = {}'.format(longest_lineage.gen,longest_lineage.dna))
-    root.update()
-
-    fps['f'] += 1
-    lastFrameTime = currentTime
-    ui_thread = threading.Thread(target=update_image, args=(root_w,root_h))
-    ui_thread.start()
-    
-  # Cell cycle (synchronous - main thread)
-  if (cps_time_difference >= 1/TARGET_CPS):
-    cycle()
-    fps['c'] += 1
-    lastCycleTime = currentTime
-    
+app.exec()
