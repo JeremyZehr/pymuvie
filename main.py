@@ -14,17 +14,14 @@ from PIL import Image
 from copy import deepcopy
 
 pg.setConfigOption('imageAxisOrder', 'row-major')
-app = QtWidgets.QApplication([])
-win = QtWidgets.QWidget()
-win.setWindowTitle('Pymuvie')
 
 mapImg = cv2.imread('background.png')
 
-TARGET_FPS = 15 # number of times the display is refreshed per second
+TARGET_FPS = 20 # number of times the display is refreshed per second
 TARGET_CPS = 200 # number of cell cycles per second
 FERTILITY = 180 # number of cycles needed to wait before being able to give birth
 LIFE = 20 # number of remaining cycles that cells start with (~childhood)
-NCELLS = 200 # Number of cells at the beginning
+NCELLS = 500 # Number of cells at the beginning
 MUTATION = 100 # Prevalence of mutation per letter (1/MUTATION)
 WIDTH = mapImg.shape[1]
 HEIGHT = mapImg.shape[0]
@@ -37,54 +34,61 @@ DNA = "NSEWRLFB0HPCV"
 # H=Hungry (look for abundant spot); P=Patient (avoid abundant spots); 
 # C=Crowd (look for crowded spot); V=Void (avoid crowded spots)
 
-plot = pg.RawImageWidget()
-plot.setImage(mapImg)
+# PLOT contains the image to be displayed
+# plot = pg.RawImageWidget()
+# plot.setImage(mapImg)
 
-mouse_x, mouse_y = -1, -1
-def move(moveEvent):
-  global mouse_x, mouse_y
-  mouse_x, mouse_y = -1, -1
-  plot_x, plot_y = plot.pos().x(), plot.pos().y()
-  plot_width, plot_height = plot.width(), plot.height()
-  x, y = moveEvent.pos().x(), moveEvent.pos().y()
-  if (x < plot_x or x >= plot_x+plot_width or y < plot_y or y >= plot_y+plot_height):
-    return
-  x, y = round(x * WIDTH / plot_width), round(y * HEIGHT / plot_height)
-  mouse_x, mouse_y = x, y
-plot.setMouseTracking(True) # Track mouse movements even when not clicking
-plot.mouseMoveEvent = move
-
-layout = QtWidgets.QVBoxLayout()
-layout.setSpacing(0)
-layout.setContentsMargins(0, 0, 0, 0)
-layout.addWidget(plot)
-statsLabel = QtWidgets.QLabel()
-layout.addWidget(statsLabel)
-cellLabel = QtWidgets.QLabel()
-layout.addWidget(cellLabel)
-lineageLabel = QtWidgets.QLabel()
-layout.addWidget(lineageLabel)
-
-win.setLayout(layout)
-win.resize(WIDTH,HEIGHT+BOTTOM_BAR)
-win.show()
+# mouse_x, mouse_y = -1, -1
+# def move(moveEvent):
+#   global mouse_x, mouse_y
+#   mouse_x, mouse_y = -1, -1
+#   plot_x, plot_y = plot.pos().x(), plot.pos().y()
+#   plot_width, plot_height = plot.width(), plot.height()
+#   x, y = moveEvent.pos().x(), moveEvent.pos().y()
+#   if (x < plot_x or x >= plot_x+plot_width or y < plot_y or y >= plot_y+plot_height):
+#     return
+#   x, y = round(x * WIDTH / plot_width), round(y * HEIGHT / plot_height)
+#   mouse_x, mouse_y = x, y
+# plot.setMouseTracking(True) # Track mouse movements even when not clicking
+# plot.mouseMoveEvent = move
 
 image_spots = np.zeros((HEIGHT,WIDTH,3), np.uint8)
 
 active_cell = None
 highlighted_cell = None
 
-def click(clickEvent):
-  cell = closestCellXY(mouse_x,mouse_y)
-  global highlighted_cell
-  if (cell==None):
-    highlighted_cell = None
-    return
-  if (cell==highlighted_cell):
-    highlighted_cell = None
-  else:
-    highlighted_cell = cell
-plot.mousePressEvent = click
+mouse_x, mouse_y = -1, -1
+
+# app = QtWidgets.QApplication([])
+# win = QtWidgets.QWidget()
+# win.setWindowTitle('Pymuvie')
+
+# layout = QtWidgets.QVBoxLayout()
+# layout.setSpacing(0)
+# layout.setContentsMargins(0, 0, 0, 0)
+# layout.addWidget(plot)
+# statsLabel = QtWidgets.QLabel()
+# layout.addWidget(statsLabel)
+# cellLabel = QtWidgets.QLabel()
+# layout.addWidget(cellLabel)
+# lineageLabel = QtWidgets.QLabel()
+# layout.addWidget(lineageLabel)
+
+# win.setLayout(layout)
+# win.resize(WIDTH,HEIGHT+BOTTOM_BAR)
+# win.show()
+
+# def click(clickEvent):
+#   cell = closestCellXY(mouse_x,mouse_y)
+#   global highlighted_cell
+#   if (cell==None):
+#     highlighted_cell = None
+#     return
+#   if (cell==highlighted_cell):
+#     highlighted_cell = None
+#   else:
+#     highlighted_cell = cell
+# plot.mousePressEvent = click
 
 spots_to_refresh = []
 performance = {
@@ -103,7 +107,8 @@ def update_image():
     performance['fps']['n'] = 0
     performance['fps']['lastSecond'] = timestamp
   # update info
-  statsLabel.setText('FPS: {}; CPS: {}; ncells: {}'.format(performance['fps']['value'],performance['cps']['value'],len(cells)))
+  # statsLabel.setText('FPS: {}; CPS: {}; ncells: {}'.format(performance['fps']['value'],performance['cps']['value'],len(cells)))
+  win.statsLabel.setText('FPS: {}; CPS: {}; ncells: {}'.format(performance['fps']['value'],performance['cps']['value'],len(cells)))
   
   global updating_image
   updating_image = True
@@ -130,15 +135,17 @@ def update_image():
 
   active_cell = highlighted_cell or hovered
   if active_cell:
-    cellLabel.setText("{}, Life: {}, Gen: {}, DNA: {}".format(
+    # cellLabel.setText("{}, Life: {}, Gen: {}, DNA: {}".format(
+    win.cellLabel.setText("{}, Life: {}, Gen: {}, DNA: {}".format(
       "Female" if active_cell.female else "Male",active_cell.life,active_cell.gen,active_cell.dna
     ))
   else:
-    cellLabel.setText("")
+    win.cellLabel.setText("")
+    # cellLabel.setText("")
 
   if longest_lineage:
-    lineageLabel.setText("Longest lineage: {}, {}".format(longest_lineage.gen,longest_lineage.dna))
-
+    win.lineageLabel.setText("Longest lineage: {}, {}".format(longest_lineage.gen,longest_lineage.dna))
+    # lineageLabel.setText("Longest lineage: {}, {}".format(longest_lineage.gen,longest_lineage.dna))
 
   fg = win.frameGeometry()
   w, h = fg.width(), fg.height()
@@ -149,10 +156,13 @@ def update_image():
     image_resized = cv2.resize(image_cells,(new_w,new_h), interpolation= cv2.INTER_NEAREST)
   else:
     image_resized = image_cells
-  plot.setImage(image_resized)
-  plot.setFixedSize(new_w,new_h)
+  # plot.setImage(image_resized)
+  # plot.setFixedSize(new_w,new_h)
+  win.plot.setImage(image_resized)
+  win.plot.setFixedSize(new_w,new_h)
 
   updating_image = False
+
 
 class Spot:
   def refresh(self,d):
@@ -207,6 +217,7 @@ class Spot:
       self.food = 0
     else:
       self.food = 255
+
 
 spots = [Spot(x,y,np.all(mapImg[y,x]==255)) for y in range(HEIGHT) for x in range(WIDTH)]
 def spotAtXY(x,y):
@@ -418,12 +429,89 @@ def cycle():
 for spot in walls:
   spot.refresh(image_spots)
 
-# Launch the loops
-timer_cycle = QtCore.QTimer()
-timer_cycle.timeout.connect(cycle)
-timer_cycle.start(0)
-timer_ui = QtCore.QTimer()
-timer_ui.timeout.connect(update_image)
-timer_ui.start(0)
+print("before timers")
 
+# Launch the loops
+# timer_cycle = QtCore.QTimer()
+# timer_cycle.timeout.connect(cycle)
+# timer_cycle.start(0)
+# timer_ui = QtCore.QTimer()
+# timer_ui.timeout.connect(update_image)
+# timer_ui.start(0)
+
+
+class WorkerThread(QtCore.QThread):
+  def __init__(self,fn):
+    super().__init__()
+    self.fn = fn
+
+  def run(self):
+    print("thread started from :" + str(threading.get_ident()))
+    timer = QtCore.QTimer(self)
+    timer.timeout.connect(self.fn)
+    timer.start(0)
+    self.exec()
+    print("working from :" + str(threading.get_ident()))
+
+
+class PymuWin(QtWidgets.QWidget):
+  cycle_worker = WorkerThread(cycle)
+  cycle_ui = WorkerThread(update_image)
+
+  def __init__(self):
+    super().__init__()
+    self.initUi()
+    print("Starting worker from :" + str(threading.get_ident()))
+    self.cycle_worker.start()
+    self.cycle_ui.start()
+
+  def move(self,moveEvent):
+    global mouse_x, mouse_y
+    mouse_x, mouse_y = -1, -1
+    plot_x, plot_y = self.plot.pos().x(), self.plot.pos().y()
+    plot_width, plot_height = self.plot.width(), self.plot.height()
+    x, y = moveEvent.pos().x(), moveEvent.pos().y()
+    if (x < plot_x or x >= plot_x+plot_width or y < plot_y or y >= plot_y+plot_height):
+      return
+    x, y = round(x * WIDTH / plot_width), round(y * HEIGHT / plot_height)
+    mouse_x, mouse_y = x, y
+
+  def click(self,clickEvent):
+    cell = closestCellXY(mouse_x,mouse_y)
+    global highlighted_cell
+    if (cell==None):
+      highlighted_cell = None
+      return
+    if (cell==highlighted_cell):
+      highlighted_cell = None
+    else:
+      highlighted_cell = cell
+
+  def initUi(self):
+    self.setWindowTitle('Pymuvie')
+
+    self.plot = pg.RawImageWidget()
+    self.plot.setImage(mapImg)
+    self.plot.setMouseTracking(True) # Track mouse movements even when not clicking
+    self.plot.mouseMoveEvent = self.move
+    self.plot.mousePressEvent = self.click
+
+    layout = QtWidgets.QVBoxLayout()
+    layout.setSpacing(0)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(self.plot)
+    self.statsLabel = QtWidgets.QLabel()
+    layout.addWidget(self.statsLabel)
+    self.cellLabel = QtWidgets.QLabel()
+    layout.addWidget(self.cellLabel)
+    self.lineageLabel = QtWidgets.QLabel()
+    layout.addWidget(self.lineageLabel)
+
+    self.setLayout(layout)
+    self.resize(WIDTH,HEIGHT+BOTTOM_BAR)
+
+    self.show()
+
+app = QtWidgets.QApplication([])
+win = PymuWin()
 app.exec()
