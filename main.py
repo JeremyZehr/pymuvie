@@ -24,7 +24,7 @@ TARGET_FPS = 15 # number of times the display is refreshed per second
 TARGET_CPS = 200 # number of cell cycles per second
 FERTILITY = 180 # number of cycles needed to wait before being able to give birth
 LIFE = 20 # number of remaining cycles that cells start with (~childhood)
-NCELLS = 2000 # Number of cells at the beginning
+NCELLS = 200 # Number of cells at the beginning
 MUTATION = 100 # Prevalence of mutation per letter (1/MUTATION)
 WIDTH = mapImg.shape[1]
 HEIGHT = mapImg.shape[0]
@@ -53,6 +53,10 @@ def move(moveEvent):
   mouse_x, mouse_y = x, y
 plot.setMouseTracking(True) # Track mouse movements even when not clicking
 plot.mouseMoveEvent = move
+def clear_mouse(leaveEvent):
+  global mouse_x, mouse_y
+  mouse_x, mouse_y = -1, -1
+plot.leaveEvent = clear_mouse
 
 layout = QtWidgets.QVBoxLayout()
 layout.setSpacing(0)
@@ -233,18 +237,16 @@ class Cell:
     
   def place(self,x,y):
     old_spot = spotAtXY(self.x,self.y)
-    if (self.life<=0):
-      if (self in cells):
-        cells.remove(self)
-      if (self in old_spot.cells):
-        old_spot.cells.remove(self)
-        if (self not in old_spot.dead_cells):
-          old_spot.dead_cells.append(self)
-          # if old_spot not in spots_to_refresh:
-          #   spots_to_refresh.append(old_spot)
+    # Looking up the index then using del is faster than checking if the cell is in the list then using remove
+    try:
+      old_spot_index = old_spot.cells.index(self)
+    except:
+      old_spot_index = -1
+    if old_spot_index >= 0:
+      del old_spot.cells[old_spot_index]
+    if (self.life<=0 and self not in old_spot.dead_cells):
+      old_spot.dead_cells.append(self)
       return
-    if self in old_spot.cells:
-      old_spot.cells.remove(self)
     x = x%WIDTH
     y = y%HEIGHT
     spot = spotAtXY(x,y)
@@ -320,8 +322,11 @@ def cycle():
     performance['cps']['value'] = performance['cps']['n']
     performance['cps']['n'] = 0
     performance['cps']['lastSecond'] = timestamp
-  for cell in cells:
+  # Remove the cells only after scanning them all
+  remove_from_cells = []
+  for i, cell in enumerate(cells):
     if (cell.life<=0):
+      remove_from_cells.insert(0,i) # will need to remove the greatest indices first to not mess up
       continue
     cell.step = (cell.step+1) % len(cell.dna)
     cell.fertile_in = max(0,cell.fertile_in-1)
@@ -399,6 +404,9 @@ def cycle():
     cell.life = max(0,cell.life-1)
     x, y = cell.x, cell.y
     cell.place(cell.x+dx,cell.y+dy)
+
+    if (cell.life<=0):
+      remove_from_cells.insert(0,i) # will need to remove the greatest indices first to not mess up
     # Update cell.direction with the *actual* movement (maybe there was a wall on the way)
     if cell.x < x:
       cell.direction = "W"
@@ -410,7 +418,13 @@ def cycle():
       cell.direction = "S"
     else:
       cell.direction = "0"
+  # end for cells loop
+
+  # Remove the cells that need to be removed
+  for i in remove_from_cells:
+    del cells[i]
 # end cycle
+
 
 # fps = {'timestamp': 0, 'n': 0, 'c': 0, 'f': 0}
 
